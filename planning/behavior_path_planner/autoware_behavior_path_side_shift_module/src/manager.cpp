@@ -17,8 +17,10 @@
 #include "autoware_utils/ros/update_param.hpp"
 
 #include <rclcpp/rclcpp.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -43,6 +45,44 @@ void SideShiftModuleManager::init(rclcpp::Node * node)
   p.publish_debug_marker = node->declare_parameter<bool>(ns + "publish_debug_marker");
 
   parameters_ = std::make_shared<SideShiftParameters>(p);
+
+  // Example service: returns current side-shift offset limits.
+  srv_get_offset_limits_ = node->create_service<std_srvs::srv::Trigger>(
+    ns + "calc_offset_limits",
+    [this](
+      [[maybe_unused]] const std_srvs::srv::Trigger::Request::SharedPtr request,
+      std_srvs::srv::Trigger::Response::SharedPtr response) {
+      for (const auto & observer : observers_) {
+        if (observer.expired()) {
+          continue;
+        }
+        const auto side_shift_module = std::dynamic_pointer_cast<SideShiftModule>(observer.lock());
+        if (!side_shift_module) {
+          continue;
+        }
+        const auto [min_offset, max_offset] = side_shift_module->getOffsetLimits();
+        std::ostringstream message;
+        message << "offset_limits: min=" << min_offset << ", max=" << max_offset;
+        response->success = true;
+        response->message = message.str();
+        return;
+      }
+
+      if (idle_module_ptr_) {
+        const auto * idle_side_shift_module = dynamic_cast<SideShiftModule *>(idle_module_ptr_.get());
+        if (idle_side_shift_module != nullptr) {
+          const auto [min_offset, max_offset] = idle_side_shift_module->getOffsetLimits();
+          std::ostringstream message;
+          message << "offset_limits(from_idle): min=" << min_offset << ", max=" << max_offset;
+          response->success = true;
+          response->message = message.str();
+          return;
+        }
+      }
+
+      response->success = false;
+      response->message = "No active side shift module instance.";
+    });
 }
 
 void SideShiftModuleManager::updateModuleParams(

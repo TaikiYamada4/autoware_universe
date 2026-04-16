@@ -19,6 +19,7 @@
 #include "autoware/behavior_path_side_shift_module/scene.hpp"
 
 #include <rclcpp/rclcpp.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
 #include <memory>
 #include <string>
@@ -46,6 +47,7 @@ public:
 
 private:
   std::shared_ptr<SideShiftParameters> parameters_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr srv_get_offset_limits_;
 };
 
 }  // namespace autoware::behavior_path_planner

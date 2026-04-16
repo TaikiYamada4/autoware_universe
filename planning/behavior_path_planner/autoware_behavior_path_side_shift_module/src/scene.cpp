@@ -20,11 +20,15 @@
 #include "autoware/behavior_path_planner_common/utils/utils.hpp"
 #include "autoware/behavior_path_side_shift_module/utils.hpp"
 
+#include <autoware/lanelet2_utils/topology.hpp>
 #include <autoware/motion_utils/trajectory/path_shift.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <unordered_map>
 
 namespace autoware::behavior_path_planner
@@ -80,6 +84,11 @@ void SideShiftModule::processOnExit()
 void SideShiftModule::setParameters(const std::shared_ptr<SideShiftParameters> & parameters)
 {
   parameters_ = parameters;
+}
+
+std::pair<double, double> SideShiftModule::getOffsetLimits() const
+{
+  return calcOffsetLimitsFromLanelets();
 }
 
 bool SideShiftModule::isExecutionRequested() const
@@ -184,7 +193,17 @@ void SideShiftModule::updateData()
     planner_data_->lateral_offset->stamp != latest_lateral_offset_stamp_) {
     if (isReadyForNextRequest(parameters_->shift_request_time_limit)) {
       lateral_offset_change_request_ = true;
-      requested_lateral_offset_ = planner_data_->lateral_offset->lateral_offset;
+      const auto requested_offset = planner_data_->lateral_offset->lateral_offset;
+      requested_lateral_offset_ = requested_offset;
+      const auto [min_offset, max_offset] = calcOffsetLimitsFromLanelets();
+      requested_lateral_offset_ =
+        std::clamp(requested_lateral_offset_, min_offset, max_offset);
+      if (std::abs(requested_lateral_offset_ - requested_offset) > 1.0e-4) {
+        RCLCPP_WARN(
+          getLogger(),
+          "Requested lateral offset is saturated: requested=%.3f, clamped=%.3f, limits=[%.3f, %.3f]",
+          requested_offset, requested_lateral_offset_, min_offset, max_offset);
+      }
       latest_lateral_offset_stamp_ = planner_data_->lateral_offset->stamp;
     }
   }
@@ -489,5 +508,98 @@ void SideShiftModule::setDebugMarkersVisualization() const
   if (debug_data_.path_shifter) {
     add_shift_line_marker("side_shift_shift_points", 0.7, 0.7, 0.7, 0.4);
   }
+}
+
+std::pair<double, double> SideShiftModule::calcOffsetLimitsFromLanelets() const
+{
+  if (!planner_data_ || !planner_data_->route_handler || reference_path_.points.empty()) {
+    return {0.0, 0.0};
+  }
+
+  const auto & route_handler = planner_data_->route_handler;
+  const auto routing_graph = route_handler->getRoutingGraphPtr();
+  if (!routing_graph) {
+    return {0.0, 0.0};
+  }
+
+  const auto ego_idx = planner_data_->findEgoIndex(reference_path_.points);
+  if (ego_idx + 1 >= reference_path_.points.size()) {
+    return {0.0, 0.0};
+  }
+
+  // Collect lanelets that the reference path will traverse after the ego pose.
+  lanelet::ConstLanelets reference_lanelets;
+  std::unordered_set<lanelet::Id> seen_lanelet_ids;
+  for (size_t i = ego_idx; i < reference_path_.points.size(); ++i) {
+    const auto & path_point = reference_path_.points.at(i);
+    for (const auto lane_id : path_point.lane_ids) {
+      if (seen_lanelet_ids.insert(lane_id).second) {
+        reference_lanelets.push_back(route_handler->getLaneletsFromId(lane_id));
+      }
+    }
+  }
+
+  if (reference_lanelets.empty()) {
+    return {0.0, 0.0};
+  }
+
+  const auto calc_distance_2d = [](const auto & p0, const auto & p1) {
+    return std::hypot(p0.x() - p1.x(), p0.y() - p1.y());
+  };
+
+  double shortest_left_distance = std::numeric_limits<double>::max();
+  double shortest_right_distance = std::numeric_limits<double>::max();
+
+  for (const auto & lanelet : reference_lanelets) {
+    const auto & left_border = lanelet.leftBound();
+    const auto & right_border = lanelet.rightBound();
+    if (left_border.empty() || right_border.empty()) {
+      continue;
+    }
+
+    lanelet::BasicPoint2d start_midpoint{
+      0.5 * (left_border.front().x() + right_border.front().x()),
+      0.5 * (left_border.front().y() + right_border.front().y())};
+    lanelet::BasicPoint2d end_midpoint{
+      0.5 * (left_border.back().x() + right_border.back().x()),
+      0.5 * (left_border.back().y() + right_border.back().y())};
+
+    const auto left_lanelets_opt =
+      autoware::experimental::lanelet2_utils::left_lanelets(lanelet, routing_graph);
+    const auto & left_limit_border =
+      (left_lanelets_opt.has_value() && !left_lanelets_opt->empty())
+        ? left_lanelets_opt->back().leftBound()
+        : left_border;
+    if (!left_limit_border.empty()) {
+      const auto left_distance_at_start = calc_distance_2d(start_midpoint, left_limit_border.front());
+      const auto left_distance_at_end = calc_distance_2d(end_midpoint, left_limit_border.back());
+      const auto left_distance = std::min(left_distance_at_start, left_distance_at_end);
+      shortest_left_distance = std::min(shortest_left_distance, left_distance);
+    }
+
+    const auto right_lanelets_opt =
+      autoware::experimental::lanelet2_utils::right_lanelets(lanelet, routing_graph);
+    const auto & right_limit_border =
+      (right_lanelets_opt.has_value() && !right_lanelets_opt->empty())
+        ? right_lanelets_opt->back().rightBound()
+        : right_border;
+    if (!right_limit_border.empty()) {
+      const auto right_distance_at_start =
+        calc_distance_2d(start_midpoint, right_limit_border.front());
+      const auto right_distance_at_end = calc_distance_2d(end_midpoint, right_limit_border.back());
+      const auto right_distance = std::min(right_distance_at_start, right_distance_at_end);
+      shortest_right_distance = std::min(shortest_right_distance, right_distance);
+    }
+  }
+
+  if (!std::isfinite(shortest_left_distance)) {
+    shortest_left_distance = 0.0;
+  }
+  if (!std::isfinite(shortest_right_distance)) {
+    shortest_right_distance = 0.0;
+  }
+
+  // Set right offset to be negative as desired by the planner
+  return {-shortest_right_distance, shortest_left_distance};
 }
 }  // namespace autoware::behavior_path_planner

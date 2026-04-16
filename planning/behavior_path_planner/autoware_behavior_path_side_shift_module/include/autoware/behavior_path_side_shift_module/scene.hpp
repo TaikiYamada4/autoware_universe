@@ -60,6 +60,7 @@ public:
   void processOnExit() override;
 
   void setParameters(const std::shared_ptr<SideShiftParameters> & parameters);
+  std::pair<double, double> getOffsetLimits() const;
 
   void updateModuleParams(const std::any & parameters) override
   {
@@ -84,6 +85,8 @@ private:
   ShiftLine calcShiftLine() const;
 
   void replaceShiftLine();
+
+  std::pair<double, double> calcOffsetLimitsFromLanelets() const;
 
   // const methods
   void publishPath(const PathWithLaneId & path) const;

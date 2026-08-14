@@ -135,33 +135,22 @@ std::vector<lanelet::ConstLanelet> get_nearest_lanelets(
   return nearest_lanelets;
 }
 
-bool has_shortest_path_without_lane_change(
-  const lanelet::routing::RoutingGraph & routing_graph, const lanelet::ConstLanelet & from,
-  const lanelet::ConstLanelet & to)
-{
-  constexpr lanelet::routing::RoutingCostId k_default_routing_cost_id{0};
-  constexpr bool k_with_lane_changes{false};
-  return static_cast<bool>(
-    routing_graph.shortestPath(from, to, k_default_routing_cost_id, k_with_lane_changes));
-}
-
 /** Reuses bidirectional routing results for objects assigned to the same lanelet pair. */
 template <typename ObjectT>
 bool is_routably_connected_to_ego_without_lane_change(
   const FrameEvaluationContext<ObjectT> & context, const lanelet::ConstLanelet & ego_lanelet,
   const lanelet::ConstLanelet & object_lanelet)
 {
-  const LaneletPairKey key{ego_lanelet.id(), object_lanelet.id()};
-  if (const auto iter = context.routability_cache.find(key);
-      iter != context.routability_cache.end()) {
-    return iter->second;
-  }
+  const auto & relation_map = context.routability_cache;
+  const auto ego_id = ego_lanelet.id();
+  const auto obj_id = object_lanelet.id();
+  const auto it_ego = context.routability_cache.find(ego_id);
+  const auto it_obj = context.routability_cache.find(obj_id);
 
-  const bool is_connected =
-    has_shortest_path_without_lane_change(*context.routing_graph, object_lanelet, ego_lanelet) ||
-    has_shortest_path_without_lane_change(*context.routing_graph, ego_lanelet, object_lanelet);
-  context.routability_cache.emplace(key, is_connected);
-  return is_connected;
+  const bool ego_to_obj = (it_ego != relation_map.end()) && (it_ego->second.count(obj_id) > 0);
+  const bool obj_to_ego = (it_obj != relation_map.end()) && (it_obj->second.count(ego_id) > 0);
+
+  return ego_to_obj || obj_to_ego;
 }
 
 template <typename ObjectT>
@@ -824,8 +813,7 @@ FrameEvaluationContext<ObjectT> make_frame_evaluation_context(
   if (route_map) {
     context.ego_lanelets =
       get_nearest_lanelets(*route_map, trajectory.points.front().pose.position);
-    constexpr std::size_t k_max_object_lanelets = 5;
-    context.routability_cache.reserve(context.ego_lanelets.size() * k_max_object_lanelets);
+    context.routability_cache = extended_route_handler.get_routability_cache();
   }
 
   if (context.built_trajectory) {
@@ -1010,14 +998,7 @@ void AvoidanceTargetDetectorBase<ObjectT>::observe_and_update_all(
   deviation_filter_->observe_and_update(context, object);
 
   is_driving_along_candidate_now_ = false;
-  is_on_polygon_now_ = false;
   if (!is_object_of_interest() || is_stationary()) {
-    return;
-  }
-
-  is_on_polygon_now_ = context.near_segment_polygon &&
-                       overlaps_near_segment_polygon(object, *context.near_segment_polygon);
-  if (!is_on_polygon_now_) {
     return;
   }
 
@@ -1083,7 +1064,7 @@ template <typename ObjectT>
 void AvoidanceTargetDetectorBase<ObjectT>::track_driving_along_vehicles()
 {
   const auto & current_time = stale_check_time_;
-  const bool is_moving_vehicle_now = is_driving_along_candidate_now_;
+  const bool is_moving_vehicle_now = is_driving_along_candidate_now_ && !is_stationary();
 
   if (!is_moving_vehicle_tracking_initialized_) {
     is_moving_vehicle_stamped_.first = current_time;
@@ -1095,14 +1076,6 @@ void AvoidanceTargetDetectorBase<ObjectT>::track_driving_along_vehicles()
   moving_vehicle_state_change_count_ = (is_moving_vehicle_now != is_moving_vehicle_stamped_.second)
                                          ? moving_vehicle_state_change_count_ + 1
                                          : 0;
-
-  // Keep stamped moving-vehicle state when a previously tracked vehicle leaves the near-segment
-  // polygon.
-  if (is_moving_vehicle_stamped_.second && !is_on_polygon_now_) {
-    is_moving_vehicle_stamped_.first = current_time;
-    is_moving_vehicle_stamped_.second = true;
-    return;
-  }
 
   if (
     is_moving_vehicle_stamped_.second &&
@@ -1147,6 +1120,11 @@ void ObjectSelectorBase<ObjectT>::update_objects(
 
   for (const auto & object : objects.objects) {
     if (!is_object_of_interest(object)) {
+      continue;
+    }
+    if (
+      context.near_segment_polygon &&
+      !overlaps_near_segment_polygon(object, *context.near_segment_polygon)) {
       continue;
     }
     const auto it = object_filters_.try_emplace(object.object_id.uuid, object, current_time).first;

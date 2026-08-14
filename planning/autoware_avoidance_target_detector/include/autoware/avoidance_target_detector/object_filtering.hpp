@@ -77,7 +77,7 @@ struct FrameEvaluationContext
   const lanelet::routing::RoutingGraph * routing_graph{nullptr};
   std::vector<lanelet::ConstLanelet> ego_lanelets;
   /// Results of bidirectional, no-lane-change routing checks for this frame.
-  mutable std::unordered_map<LaneletPairKey, bool, LaneletPairHash> routability_cache;
+  ExtendedRouteHandler::RoutabilityCache routability_cache;
 };
 
 /**
@@ -249,7 +249,6 @@ private:
   rclcpp::Time stale_check_time_;
 
   bool is_driving_along_candidate_now_{false};
-  bool is_on_polygon_now_{false};
 
   bool is_avoidance_tracking_initialized_{false};
   bool is_moving_vehicle_tracking_initialized_{false};

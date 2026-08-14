@@ -274,8 +274,7 @@ TYPED_TEST(UpdateObjectsTest, EmptyInputProducesEmptyOutputs)
 
   selector.update_objects(make_time(0), objects, Trajectory{}, route_handler());
 
-  EXPECT_TRUE(selector.get_avoidance_targets(objects, Trajectory{}, this->empty_route_bounds_)
-                .objects.empty());
+  EXPECT_TRUE(selector.get_avoidance_targets(objects).objects.empty());
   EXPECT_TRUE(selector.get_driving_along_vehicles(objects).objects.empty());
 }
 
@@ -285,8 +284,7 @@ TYPED_TEST(UpdateObjectsTest, StationaryDeviatedObjectIsImmediatelyAvoidanceTarg
   const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 2.0)});
 
   selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
-  const auto avoidance_targets =
-    selector.get_avoidance_targets(objects, this->trajectory_, this->empty_route_bounds_);
+  const auto avoidance_targets = selector.get_avoidance_targets(objects);
 
   EXPECT_EQ(object_ids(avoidance_targets), std::vector<uint8_t>({1}));
   EXPECT_TRUE(selector.get_driving_along_vehicles(objects).objects.empty());
@@ -299,8 +297,7 @@ TYPED_TEST(UpdateObjectsTest, StationaryAlignedObjectIsNotAvoidanceTarget)
 
   selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
 
-  EXPECT_TRUE(selector.get_avoidance_targets(objects, this->trajectory_, this->empty_route_bounds_)
-                .objects.empty());
+  EXPECT_TRUE(selector.get_avoidance_targets(objects).objects.empty());
   EXPECT_TRUE(selector.get_driving_along_vehicles(objects).objects.empty());
 }
 
@@ -333,8 +330,7 @@ TYPED_TEST(UpdateObjectsTest, ClassificationProbabilityThresholdIsStrict)
      make_object<TypeParam>(3, 15.0, 2.0, 0.0, ObjectClassification::PEDESTRIAN, 1.0F)});
 
   selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
-  const auto avoidance_targets =
-    selector.get_avoidance_targets(objects, this->trajectory_, this->empty_route_bounds_);
+  const auto avoidance_targets = selector.get_avoidance_targets(objects);
 
   EXPECT_EQ(object_ids(avoidance_targets), std::vector<uint8_t>({2}));
 }
@@ -347,8 +343,7 @@ TYPED_TEST(UpdateObjectsTest, MixedObjectsPreserveHeaderAndSurvivingOrder)
      make_object<TypeParam>(7, 18.0, 2.0), make_object<TypeParam>(9, 15.0, 2.6, 2.0)});
 
   selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
-  const auto avoidance_targets =
-    selector.get_avoidance_targets(objects, this->trajectory_, this->empty_route_bounds_);
+  const auto avoidance_targets = selector.get_avoidance_targets(objects);
   const auto driving_along = selector.get_driving_along_vehicles(objects);
 
   EXPECT_EQ(object_ids(avoidance_targets), std::vector<uint8_t>({4, 7}));
@@ -365,8 +360,7 @@ TYPED_TEST(UpdateObjectsTest, EmptyAndSinglePointTrajectoriesUseCurrentFallbackB
   typename TestFixture::Selector empty_trajectory_selector;
   empty_trajectory_selector.update_objects(make_time(0), objects, Trajectory{}, route_handler());
   EXPECT_EQ(
-    object_ids(empty_trajectory_selector.get_avoidance_targets(
-      objects, Trajectory{}, this->empty_route_bounds_)),
+    object_ids(empty_trajectory_selector.get_avoidance_targets(objects)),
     std::vector<uint8_t>({1}));
 
   const auto single_point_trajectory = make_single_point_trajectory(15.0);
@@ -374,9 +368,7 @@ TYPED_TEST(UpdateObjectsTest, EmptyAndSinglePointTrajectoriesUseCurrentFallbackB
   single_point_selector.update_objects(
     make_time(0), objects, single_point_trajectory, route_handler());
   EXPECT_EQ(
-    object_ids(single_point_selector.get_avoidance_targets(
-      objects, single_point_trajectory, this->empty_route_bounds_)),
-    std::vector<uint8_t>({1}));
+    object_ids(single_point_selector.get_avoidance_targets(objects)), std::vector<uint8_t>({1}));
 }
 
 TYPED_TEST(UpdateObjectsTest, SinglePointTrajectorySupportsIdenticalPolygonEndpoints)
@@ -397,20 +389,13 @@ TYPED_TEST(UpdateObjectsTest, StaleThresholdComparisonIsStrict)
   const typename TestFixture::Objects empty_objects;
 
   selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
-  ASSERT_EQ(
-    selector.get_avoidance_targets(objects, this->trajectory_, this->empty_route_bounds_)
-      .objects.size(),
-    1U);
+  ASSERT_EQ(selector.get_avoidance_targets(objects).objects.size(), 1U);
 
   selector.update_objects(make_time(1), empty_objects, this->trajectory_, route_handler());
-  EXPECT_EQ(
-    selector.get_avoidance_targets(objects, this->trajectory_, this->empty_route_bounds_)
-      .objects.size(),
-    1U);
+  EXPECT_EQ(selector.get_avoidance_targets(objects).objects.size(), 1U);
 
   selector.update_objects(make_time(1, 1), empty_objects, this->trajectory_, route_handler());
-  EXPECT_TRUE(selector.get_avoidance_targets(objects, this->trajectory_, this->empty_route_bounds_)
-                .objects.empty());
+  EXPECT_TRUE(selector.get_avoidance_targets(objects).objects.empty());
 }
 
 TYPED_TEST(UpdateObjectsTest, AvoidanceHysteresisCountAccumulatesDuringTimeLockout)
@@ -420,26 +405,18 @@ TYPED_TEST(UpdateObjectsTest, AvoidanceHysteresisCountAccumulatesDuringTimeLocko
   const auto aligned_objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 0.0)});
 
   selector.update_objects(make_time(0), deviated_objects, this->trajectory_, route_handler());
-  ASSERT_EQ(
-    selector.get_avoidance_targets(deviated_objects, this->trajectory_, this->empty_route_bounds_)
-      .objects.size(),
-    1U);
+  ASSERT_EQ(selector.get_avoidance_targets(deviated_objects).objects.size(), 1U);
 
   selector.update_objects(
     make_time(0, 100000000), aligned_objects, this->trajectory_, route_handler());
   // Repeated getter calls intentionally advance the state-change counter without advancing time.
   for (std::size_t i = 0; i < FilterManagerParams::count_threshold; ++i) {
-    EXPECT_EQ(
-      selector.get_avoidance_targets(aligned_objects, this->trajectory_, this->empty_route_bounds_)
-        .objects.size(),
-      1U);
+    EXPECT_EQ(selector.get_avoidance_targets(aligned_objects).objects.size(), 1U);
   }
 
   selector.update_objects(
     make_time(0, 500000000), aligned_objects, this->trajectory_, route_handler());
-  EXPECT_TRUE(
-    selector.get_avoidance_targets(aligned_objects, this->trajectory_, this->empty_route_bounds_)
-      .objects.empty());
+  EXPECT_TRUE(selector.get_avoidance_targets(aligned_objects).objects.empty());
 }
 
 TYPED_TEST(UpdateObjectsTest, DrivingAlongHysteresisCountAccumulatesDuringTimeLockout)
@@ -473,9 +450,11 @@ TYPED_TEST(UpdateObjectsTest, FirstObservationBypassesAllTransitionMatrices)
   StationaryFilter<TypeParam> stationary_filter(object, current_time);
   DeviationFilter<TypeParam> deviation_filter(object, current_time);
 
-  target_filter.observe_and_update(current_time, object, this->trajectory_);
-  stationary_filter.observe_and_update(current_time, object, this->trajectory_);
-  deviation_filter.observe_and_update(current_time, object, this->trajectory_);
+  const auto context =
+    make_frame_evaluation_context<TypeParam>(current_time, this->trajectory_, route_handler());
+  target_filter.observe_and_update(context, object);
+  stationary_filter.observe_and_update(context, object);
+  deviation_filter.observe_and_update(context, object);
 
   EXPECT_DOUBLE_EQ(target_filter.get_posterior(), 0.95);
   EXPECT_DOUBLE_EQ(stationary_filter.get_posterior(), 0.99);
@@ -522,17 +501,6 @@ TYPED_TEST(UpdateObjectsTest, RangeFilterRejectsInvalidMargins)
       (void)filtered;
     },
     std::invalid_argument);
-}
-
-TYPED_TEST(UpdateObjectsTest, LongitudinalFilterPrunesStateQualifiedTarget)
-{
-  typename TestFixture::Selector selector;
-  const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, -10.0, 2.0)});
-
-  selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
-
-  EXPECT_TRUE(selector.get_avoidance_targets(objects, this->trajectory_, this->empty_route_bounds_)
-                .objects.empty());
 }
 
 }  // namespace

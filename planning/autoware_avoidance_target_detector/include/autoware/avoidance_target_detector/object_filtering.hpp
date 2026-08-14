@@ -80,6 +80,18 @@ struct FrameEvaluationContext
   mutable std::unordered_map<LaneletPairKey, bool, LaneletPairHash> routability_cache;
 };
 
+/**
+ * @brief Builds the trajectory and immutable lookup data shared by one frame's object evaluations.
+ * @param current_time Time stamp shared by every object evaluation of this frame.
+ * @param trajectory Reference trajectory of this frame.
+ * @param extended_route_handler Route lookups. It owns the map and routing graph the context only
+ *                               points at, so it must outlive the returned context.
+ */
+template <typename ObjectT>
+[[nodiscard]] FrameEvaluationContext<ObjectT> make_frame_evaluation_context(
+  const rclcpp::Time & current_time, const Trajectory & trajectory,
+  const ExtendedRouteHandler & extended_route_handler);
+
 /** Maps an object element type to its container message type. */
 template <typename ObjectT>
 struct ObjectContainerTraits;
@@ -116,8 +128,6 @@ public:
   {
     return current_time - last_update_time_ > rclcpp::Duration::from_seconds(1.0);
   }
-  void observe_and_update(
-    const rclcpp::Time & current_time, const ObjectT & object, const Trajectory & trajectory);
   void observe_and_update(const FrameEvaluationContext<ObjectT> & context, const ObjectT & object);
 
 protected:
@@ -197,12 +207,6 @@ public:
   explicit AvoidanceTargetDetectorBase(
     const ObjectT & object, const rclcpp::Time & last_update_time);
 
-  void observe_and_update_all(
-    const rclcpp::Time & current_time, const ObjectT & object, const Trajectory & trajectory,
-    const lanelet::LaneletMapPtr & route_map,
-    const lanelet::routing::RoutingGraphConstPtr & routing_graph,
-    const lanelet::BasicPolygon2d & near_segment_polygon,
-    const std::vector<lanelet::ConstLanelet> & ego_lanelets);
   void observe_and_update_all(
     const FrameEvaluationContext<ObjectT> & context, const ObjectT & object);
   [[nodiscard]] double get_is_target_probability() const { return target_filter_->get_posterior(); }
@@ -291,8 +295,7 @@ public:
    * @details Call update_objects() first in the same cycle. Runs avoidance-target tracking,
    *          then removes non-targets and objects outside longitudinal and lateral distance bounds.
    */
-  [[nodiscard]] Objects get_avoidance_targets(
-    const Objects & objects, const Trajectory & trajectory, const RouteBounds & route_bounds);
+  [[nodiscard]] Objects get_avoidance_targets(const Objects & objects);
 
   [[nodiscard]] Objects get_driving_along_vehicles(const Objects & objects);
 
@@ -325,47 +328,6 @@ using TrackedObjectSelector = ObjectSelectorBase<TrackedObject>;
  */
 [[nodiscard]] TrackedObjects filter_objects_in_range(
   const TrackedObjects & objects, const Trajectory & trajectory, double margin);
-
-/**
- * @brief Check whether the object footprint lies beyond the trajectory end in arc-length.
- * @param trajectory Reference trajectory.
- * @param object Object.
- * @return True if the minimum footprint s exceeds trajectory.length().
- */
-template <typename ObjectT>
-[[nodiscard]] bool is_object_beyond_trajectory_end(
-  const Trajectory & trajectory, const ObjectT & object);
-
-/**
- * @brief Check whether an object should be filtered out as on-trajectory corridor alignment.
- * @param trajectory Reference trajectory.
- * @param object Object.
- * @return True if the object aligns with the trajectory corridor and should be filtered out.
- */
-template <typename ObjectT>
-[[nodiscard]] bool should_filter_out_on_trajectory_object(
-  const Trajectory & trajectory, const ObjectT & object);
-
-/**
- * @brief Check whether an object should be filtered out by longitudinal distance from trajectory.
- * @details Removes objects whose entire footprint lies before the trajectory start or after the
- *          trajectory end, with tolerance. Uses signed longitudinal deviation from start/end poses
- *          so points beyond the polyline end are detected correctly.
- */
-template <typename ObjectT>
-[[nodiscard]] bool should_filter_out_by_longitudinal_distance(
-  const Trajectory & trajectory, const ObjectT & object,
-  const LongitudinalDistanceFilterParams & params = {});
-
-/**
- * @brief Check whether an object should be filtered out by lateral distance from drivable bounds.
- * @details Removes objects whose entire footprint lies outside the drivable area corridor, with
- *          tolerance.
- */
-template <typename ObjectT>
-[[nodiscard]] bool should_filter_out_by_lateral_distance(
-  const RouteBounds & route_bounds, const Trajectory & trajectory, const ObjectT & object,
-  const LateralDistanceFilterParams & params = {});
 
 }  // namespace autoware::avoidance_target_detector
 

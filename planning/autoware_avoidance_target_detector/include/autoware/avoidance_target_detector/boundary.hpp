@@ -181,6 +181,21 @@ public:
     const geometry_msgs::msg::Point & prev_end_point,
     const geometry_msgs::msg::Point & following_end_point) const;
 
+  /**
+   * @brief Build a polygon from the route segments overlapping a longitudinal range around the ego.
+   * @details The segment containing the ego is always included and its own length is never counted.
+   *          Segments are appended ahead of the ego until their accumulated abstract length reaches
+   *          forward_length, and behind the ego until it reaches backward_length, so a segment that
+   *          only partially overlaps the range is still included in full. Non-positive lengths add
+   *          no segment on that side.
+   * @param ego_point Point used to locate the segment the ego lies on.
+   * @param forward_length Longitudinal range to cover ahead of the ego segment [m].
+   * @param backward_length Longitudinal range to cover behind the ego segment [m].
+   */
+  [[nodiscard]] lanelet::BasicPolygon2d get_near_segment_polygon(
+    const geometry_msgs::msg::Point & ego_point, double forward_length,
+    double backward_length) const;
+
   [[nodiscard]] std::optional<double> get_velocity_limit(const lanelet::BasicPoint2d & point) const;
   [[nodiscard]] std::optional<double> get_velocity_limit(const lanelet::Point2d & point) const;
   [[nodiscard]] std::optional<double> get_velocity_limit(
@@ -196,6 +211,13 @@ private:
   [[nodiscard]] std::vector<ExtendedLaneletSegments::Segment> get_near_segments(
     const geometry_msgs::msg::Point & prev_end_point,
     const geometry_msgs::msg::Point & following_end_point) const;
+
+  [[nodiscard]] std::vector<ExtendedLaneletSegments::Segment> get_near_segments(
+    const geometry_msgs::msg::Point & ego_point, double forward_length,
+    double backward_length) const;
+
+  [[nodiscard]] lanelet::BasicPolygon2d build_segments_polygon(
+    const std::vector<ExtendedLaneletSegments::Segment> & segments) const;
 
   [[nodiscard]] RouteBounds build_route_bounds(
     const std::vector<const std::vector<int64_t> *> & segment_primitives) const;

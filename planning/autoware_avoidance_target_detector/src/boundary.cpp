@@ -756,11 +756,58 @@ std::vector<ExtendedLaneletSegments::Segment> ExtendedRouteHandler::get_near_seg
     all_segments.begin() + static_cast<std::ptrdiff_t>(*end_idx) + 1};
 }
 
+std::vector<ExtendedLaneletSegments::Segment> ExtendedRouteHandler::get_near_segments(
+  const geometry_msgs::msg::Point & ego_point, const double forward_length,
+  const double backward_length) const
+{
+  const auto ego_idx = find_segment_index_for_point(ego_point);
+  if (!ego_idx) {
+    return {};
+  }
+
+  const auto & all_segments = extended_lanelet_segments_.segments();
+  if (*ego_idx >= all_segments.size()) {
+    return {};
+  }
+
+  // The segment the ego lies on is always included and its own length is never counted, so the
+  // accumulated lengths start from the segments adjacent to it. A segment is appended whenever the
+  // range is not covered yet, hence a partially overlapping segment is included in full.
+  std::size_t start_idx = *ego_idx;
+  for (double accumulated = 0.0; start_idx > 0 && accumulated < backward_length;) {
+    --start_idx;
+    accumulated += all_segments[start_idx].abstract_length;
+  }
+
+  std::size_t end_idx = *ego_idx;
+  for (double accumulated = 0.0;
+       end_idx + 1 < all_segments.size() && accumulated < forward_length;) {
+    ++end_idx;
+    accumulated += all_segments[end_idx].abstract_length;
+  }
+
+  return {
+    all_segments.begin() + static_cast<std::ptrdiff_t>(start_idx),
+    all_segments.begin() + static_cast<std::ptrdiff_t>(end_idx) + 1};
+}
+
 lanelet::BasicPolygon2d ExtendedRouteHandler::get_near_segment_polygon(
   const geometry_msgs::msg::Point & prev_end_point,
   const geometry_msgs::msg::Point & following_end_point) const
 {
-  const auto segments = get_near_segments(prev_end_point, following_end_point);
+  return build_segments_polygon(get_near_segments(prev_end_point, following_end_point));
+}
+
+lanelet::BasicPolygon2d ExtendedRouteHandler::get_near_segment_polygon(
+  const geometry_msgs::msg::Point & ego_point, const double forward_length,
+  const double backward_length) const
+{
+  return build_segments_polygon(get_near_segments(ego_point, forward_length, backward_length));
+}
+
+lanelet::BasicPolygon2d ExtendedRouteHandler::build_segments_polygon(
+  const std::vector<ExtendedLaneletSegments::Segment> & segments) const
+{
   if (segments.empty()) {
     return {};
   }

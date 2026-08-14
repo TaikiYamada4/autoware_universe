@@ -25,6 +25,7 @@
 #include <autoware_planning_msgs/msg/trajectory.hpp>
 #include <geometry_msgs/msg/point.hpp>
 
+#include <lanelet2_core/Forward.h>
 #include <lanelet2_core/LaneletMap.h>
 #include <lanelet2_core/primitives/LineString.h>
 #include <lanelet2_core/primitives/Polygon.h>
@@ -32,8 +33,10 @@
 #include <lanelet2_traffic_rules/GenericTrafficRules.h>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -100,6 +103,7 @@ public:
     std::vector<int64_t> ordered_primitives;
     std::vector<int64_t> siblings_included_primitives;
     std::vector<int64_t> floating_primitives;
+    double abstract_length{0.0};
   };
 
   void build(const lanelet::LaneletMap & map, const lanelet::routing::RoutingGraph & routing_graph);
@@ -114,6 +118,8 @@ private:
 class ExtendedRouteHandler
 {
 public:
+  using RoutabilityCache = std::map<lanelet::Id, std::set<lanelet::Id>>;
+
   ExtendedRouteHandler(const LaneletMapBin & map, const LaneletRoute & route);
 
   /** Build the extended route map and routing graph from the original map and route. */
@@ -162,6 +168,11 @@ public:
     return extended_route_bounds_;
   }
 
+  [[nodiscard]] const RoutabilityCache & get_routability_cache() const
+  {
+    return routability_cache_;
+  }
+
   /**
    * @brief Build a polygon from the route segments containing and between two points.
    * @details Identical start and end points are supported and select their containing segment.
@@ -189,6 +200,8 @@ private:
   [[nodiscard]] RouteBounds build_route_bounds(
     const std::vector<const std::vector<int64_t> *> & segment_primitives) const;
 
+  void store_routability_cache();
+
   LaneletRoute route_;
   lanelet::LaneletMapPtr route_map_;
   ExtendedLaneletSegments extended_lanelet_segments_;
@@ -201,6 +214,7 @@ private:
   SegmentRtree road_borders_rtree_;
   SegmentRtree original_bounds_rtree_;
   SegmentRtree extended_bounds_rtree_;
+  RoutabilityCache routability_cache_;
 };
 
 /**

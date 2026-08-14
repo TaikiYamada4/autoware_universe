@@ -453,6 +453,8 @@ void ExtendedLaneletSegments::build(
   for (const auto & route_segment : route_.segments) {
     Segment segment;
     segment.preferred_primitive = route_segment.preferred_primitive.id;
+    segment.abstract_length =
+      lanelet::geometry::length2d(map.laneletLayer.get(segment.preferred_primitive));
 
     std::vector<int64_t> original_primitive_ids;
     original_primitive_ids.reserve(route_segment.primitives.size());
@@ -601,6 +603,7 @@ void ExtendedRouteHandler::create_map()
   extended_bounds_rtree_ = prepare_drivable_area_rtree(extended_route_bounds_);
 
   route_map_routing_graph_ = traffic_rules::create_goal_purpose_routing_graph(*route_map_);
+  store_routability_cache();
 }
 
 void ExtendedRouteHandler::export_debug_map() const
@@ -863,6 +866,34 @@ std::optional<double> ExtendedRouteHandler::get_velocity_limit(
   const geometry_msgs::msg::Point & point) const
 {
   return get_velocity_limit(lanelet::BasicPoint2d(point.x, point.y));
+}
+
+void ExtendedRouteHandler::store_routability_cache()
+{
+  routability_cache_.clear();
+  constexpr double k_max_routing_cost = 200.0;
+  constexpr lanelet::routing::RoutingCostId k_routing_cost_id = 0;
+  constexpr bool k_allow_lane_changes = false;
+
+  for (const auto & segment : extended_lanelet_segments_.segments()) {
+    for (const auto id : segment.siblings_included_primitives) {
+      if (
+        !route_map_->laneletLayer.exists(id) ||
+        routability_cache_.find(id) != routability_cache_.end()) {
+        continue;
+      }
+      const auto lane = route_map_->laneletLayer.get(id);
+      const auto reachable_lanelets = route_map_routing_graph_->reachableSet(
+        lane, k_max_routing_cost, k_routing_cost_id, k_allow_lane_changes);
+      if (!reachable_lanelets.empty()) {
+        std::set<lanelet::Id> forward_ids;
+        for (const auto & ll : reachable_lanelets) {
+          forward_ids.insert(ll.id());
+        }
+        routability_cache_[id] = forward_ids;
+      }
+    }
+  }
 }
 
 Path to_path_msg(const RouteBounds & bounds, const Trajectory & trajectory)

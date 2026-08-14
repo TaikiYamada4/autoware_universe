@@ -821,14 +821,18 @@ FrameEvaluationContext<ObjectT> make_frame_evaluation_context(
     return context;
   }
 
-  context.near_segment_polygon =
-    build_near_segment_polygon(extended_route_handler.get_near_segment_polygon(
-      trajectory.points.front().pose.position, trajectory.points.back().pose.position));
-
   if (route_map) {
     context.ego_lanelets = get_nearest_lanelets(*route_map, trajectory.points.back().pose.position);
     constexpr std::size_t k_max_object_lanelets = 5;
     context.routability_cache.reserve(context.ego_lanelets.size() * k_max_object_lanelets);
+  }
+
+  if (context.built_trajectory) {
+    constexpr double k_backward_length = 100.0;
+    context.near_segment_polygon =
+      build_near_segment_polygon(extended_route_handler.get_near_segment_polygon(
+        trajectory.points.front().pose.position, context.built_trajectory.value().length(),
+        k_backward_length));
   }
 
   return context;

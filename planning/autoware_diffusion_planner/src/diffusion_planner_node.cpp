@@ -671,7 +671,8 @@ void DiffusionPlanner::on_timer()
       const auto objects_in_range = autoware::avoidance_target_detector::filter_objects_in_range(
         *objects, planner_output.trajectory, mppi_object_filter_margin_m_);
       object_selector_.update_objects(
-        now(), objects_in_range, planner_output.trajectory, *extended_route_handler_);
+        now(), objects_in_range, planner_output.trajectory, *extended_route_handler_,
+        vehicle_info_);
       auto avoidance_targets = object_selector_.get_avoidance_targets(objects_in_range);
       const auto driving_along_targets =
         object_selector_.get_driving_along_vehicles(objects_in_range);

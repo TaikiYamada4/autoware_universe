@@ -19,6 +19,7 @@
 #include "autoware/avoidance_target_detector/parameter.hpp"
 
 #include <autoware/trajectory/trajectory_point.hpp>
+#include <autoware/vehicle_info_utils/vehicle_info.hpp>
 #include <autoware_utils_geometry/boost_polygon_utils.hpp>
 #include <rclcpp/rclcpp.hpp>
 
@@ -42,6 +43,7 @@
 namespace autoware::avoidance_target_detector
 {
 
+using autoware::vehicle_info_utils::VehicleInfo;
 using autoware_perception_msgs::msg::PredictedObject;
 using autoware_perception_msgs::msg::PredictedObjects;
 using autoware_perception_msgs::msg::TrackedObject;
@@ -73,6 +75,8 @@ struct FrameEvaluationContext
   std::vector<double> trajectory_bases;
   std::vector<geometry_msgs::msg::Point> trajectory_base_points;
   std::optional<autoware_utils_geometry::Polygon2d> near_segment_polygon;
+  /// Ego footprint inflated by ProximityPolygonParams, in map frame.
+  std::optional<autoware_utils_geometry::Polygon2d> proximity_polygon;
   const lanelet::LaneletMap * route_map{nullptr};
   const lanelet::routing::RoutingGraph * routing_graph{nullptr};
   std::vector<lanelet::ConstLanelet> ego_lanelets;
@@ -86,11 +90,12 @@ struct FrameEvaluationContext
  * @param trajectory Reference trajectory of this frame.
  * @param extended_route_handler Route lookups. It owns the map and routing graph the context only
  *                               points at, so it must outlive the returned context.
+ * @param vehicle_info Ego dimensions used to build the proximity polygon around the ego footprint.
  */
 template <typename ObjectT>
 [[nodiscard]] FrameEvaluationContext<ObjectT> make_frame_evaluation_context(
   const rclcpp::Time & current_time, const Trajectory & trajectory,
-  const ExtendedRouteHandler & extended_route_handler);
+  const ExtendedRouteHandler & extended_route_handler, const VehicleInfo & vehicle_info);
 
 /** Maps an object element type to its container message type. */
 template <typename ObjectT>
@@ -249,6 +254,8 @@ private:
   rclcpp::Time stale_check_time_;
 
   bool is_driving_along_candidate_now_{false};
+  /// Whether the object footprint overlapped the ego proximity polygon in the latest frame.
+  bool is_in_ego_proximity_now_{false};
 
   bool is_avoidance_tracking_initialized_{false};
   bool is_moving_vehicle_tracking_initialized_{false};
@@ -287,7 +294,7 @@ public:
   /** @brief Update per-object Bayesian filters and prune stale entries. */
   void update_objects(
     const rclcpp::Time & current_time, const Objects & objects, const Trajectory & trajectory,
-    const ExtendedRouteHandler & extended_route_handler);
+    const ExtendedRouteHandler & extended_route_handler, const VehicleInfo & vehicle_info);
 
   /**
    * @brief Select avoidance targets from objects using updated filter state.

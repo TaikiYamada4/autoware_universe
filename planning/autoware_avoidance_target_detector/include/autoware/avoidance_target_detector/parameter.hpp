@@ -61,6 +61,14 @@ struct LateralDistanceFilterParams
   double tolerance_m{0.0};  ///< Margin outside left/right bounds [m].
 };
 
+/** Parameters for the ego proximity polygon that latches driving-along vehicles. */
+struct ProximityPolygonParams
+{
+  static constexpr double lateral_margin_m = 3.0;  ///< Ego footprint inflation to left/right [m].
+  static constexpr double longitudinal_margin_m =
+    1.0;  ///< Ego footprint inflation to front/rear [m].
+};
+
 /** Parameters controlling AvoidanceTargetDetector target-state hysteresis and staleness. */
 struct FilterManagerParams
 {

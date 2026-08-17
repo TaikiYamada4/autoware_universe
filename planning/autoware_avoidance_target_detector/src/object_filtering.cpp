@@ -107,11 +107,33 @@ std::optional<autoware_utils_geometry::Polygon2d> build_near_segment_polygon(
 }
 
 template <typename ObjectT>
-bool overlaps_near_segment_polygon(
-  const ObjectT & object, const autoware_utils_geometry::Polygon2d & near_segment_polygon)
+bool overlaps_polygon(const ObjectT & object, const autoware_utils_geometry::Polygon2d & polygon)
 {
   const auto object_polygon = autoware_utils_geometry::to_polygon2d(object);
-  return boost::geometry::intersects(object_polygon, near_segment_polygon);
+  return boost::geometry::intersects(object_polygon, polygon);
+}
+
+/**
+ * @brief Build the ego proximity polygon in map frame.
+ * @details The ego footprint inflated by ProximityPolygonParams. The ego pose is taken from the
+ *          trajectory front point, which is where the rest of this package locates the ego.
+ * @return std::nullopt when the trajectory carries no point to place the ego at.
+ */
+std::optional<autoware_utils_geometry::Polygon2d> build_proximity_polygon(
+  const Trajectory & trajectory, const VehicleInfo & vehicle_info)
+{
+  if (trajectory.points.empty()) {
+    return std::nullopt;
+  }
+
+  const auto local_footprint = vehicle_info.createFootprint(
+    ProximityPolygonParams::lateral_margin_m, ProximityPolygonParams::longitudinal_margin_m);
+
+  autoware_utils_geometry::Polygon2d proximity_polygon;
+  proximity_polygon.outer() = autoware_utils_geometry::transform_vector(
+    local_footprint, autoware_utils_geometry::pose2transform(trajectory.points.front().pose));
+  boost::geometry::correct(proximity_polygon);
+  return proximity_polygon;
 }
 
 std::vector<lanelet::ConstLanelet> get_nearest_lanelets(
@@ -789,10 +811,14 @@ bool should_filter_out_on_trajectory_object(
 template <typename ObjectT>
 FrameEvaluationContext<ObjectT> make_frame_evaluation_context(
   const rclcpp::Time & current_time, const Trajectory & trajectory,
-  const ExtendedRouteHandler & extended_route_handler)
+  const ExtendedRouteHandler & extended_route_handler, const VehicleInfo & vehicle_info)
 {
   FrameEvaluationContext<ObjectT> context{
-    current_time, build_trajectory(trajectory), {}, {}, std::nullopt, nullptr, nullptr, {}, {}};
+    current_time, build_trajectory(trajectory),
+    {},           {},
+    std::nullopt, build_proximity_polygon(trajectory, vehicle_info),
+    nullptr,      nullptr,
+    {},           {}};
   if (context.built_trajectory) {
     context.trajectory_bases = context.built_trajectory->get_underlying_bases();
     context.trajectory_base_points.reserve(context.trajectory_bases.size());
@@ -997,6 +1023,11 @@ void AvoidanceTargetDetectorBase<ObjectT>::observe_and_update_all(
   stationary_filter_->observe_and_update(context, object);
   deviation_filter_->observe_and_update(context, object);
 
+  // Evaluated before the early returns below so that the driving-along latch still sees objects
+  // that stopped qualifying as candidates, which is exactly when the latch is needed.
+  is_in_ego_proximity_now_ =
+    context.proximity_polygon && overlaps_polygon(object, *context.proximity_polygon);
+
   is_driving_along_candidate_now_ = false;
   if (!is_object_of_interest() || is_stationary()) {
     return;
@@ -1077,6 +1108,14 @@ void AvoidanceTargetDetectorBase<ObjectT>::track_driving_along_vehicles()
                                          ? moving_vehicle_state_change_count_ + 1
                                          : 0;
 
+  // Keep a tracked moving vehicle latched while it stays inside the ego proximity polygon, even
+  // once it stops qualifying as a driving-along candidate.
+  if (is_moving_vehicle_stamped_.second && !is_moving_vehicle_now && is_in_ego_proximity_now_) {
+    is_moving_vehicle_stamped_.first = current_time;
+    is_moving_vehicle_stamped_.second = true;
+    return;
+  }
+
   if (
     is_moving_vehicle_stamped_.second &&
     rclcpp::Time(current_time) - rclcpp::Time(is_moving_vehicle_stamped_.first) <
@@ -1113,18 +1152,16 @@ void ObjectSelectorBase<ObjectT>::track_driving_along_vehicles()
 template <typename ObjectT>
 void ObjectSelectorBase<ObjectT>::update_objects(
   const rclcpp::Time & current_time, const Objects & objects, const Trajectory & trajectory,
-  const ExtendedRouteHandler & extended_route_handler)
+  const ExtendedRouteHandler & extended_route_handler, const VehicleInfo & vehicle_info)
 {
-  auto context =
-    make_frame_evaluation_context<ObjectT>(current_time, trajectory, extended_route_handler);
+  auto context = make_frame_evaluation_context<ObjectT>(
+    current_time, trajectory, extended_route_handler, vehicle_info);
 
   for (const auto & object : objects.objects) {
     if (!is_object_of_interest(object)) {
       continue;
     }
-    if (
-      context.near_segment_polygon &&
-      !overlaps_near_segment_polygon(object, *context.near_segment_polygon)) {
+    if (context.near_segment_polygon && !overlaps_polygon(object, *context.near_segment_polygon)) {
       continue;
     }
     const auto it = object_filters_.try_emplace(object.object_id.uuid, object, current_time).first;
@@ -1194,9 +1231,9 @@ template class ObjectSelectorBase<PredictedObject>;
 template class ObjectSelectorBase<TrackedObject>;
 
 template FrameEvaluationContext<PredictedObject> make_frame_evaluation_context<PredictedObject>(
-  const rclcpp::Time &, const Trajectory &, const ExtendedRouteHandler &);
+  const rclcpp::Time &, const Trajectory &, const ExtendedRouteHandler &, const VehicleInfo &);
 template FrameEvaluationContext<TrackedObject> make_frame_evaluation_context<TrackedObject>(
-  const rclcpp::Time &, const Trajectory &, const ExtendedRouteHandler &);
+  const rclcpp::Time &, const Trajectory &, const ExtendedRouteHandler &, const VehicleInfo &);
 
 // template bool is_object_beyond_trajectory_end<PredictedObject>(
 //   const Trajectory &, const PredictedObject &);

@@ -236,6 +236,19 @@ std::shared_ptr<ExtendedRouteHandler> make_route_handler()
   return handler;
 }
 
+/**
+ * @brief Ego dimensions for the proximity polygon.
+ * @details A 4.0 x 2.0 m box spanning x in [-1.0, 3.0] and y in [-1.0, 1.0] from base_link, so the
+ *          proximity polygon inflated by ProximityPolygonParams spans x in [-2.0, 4.0] and y in
+ *          [-4.0, 4.0] when the ego sits at the origin facing +x.
+ */
+const VehicleInfo & vehicle_info()
+{
+  static const auto info = autoware::vehicle_info_utils::createVehicleInfo(
+    0.3, 0.2, 2.0, 1.5, 1.0, 1.0, 0.25, 0.25, 1.5, 0.6);
+  return info;
+}
+
 const ExtendedRouteHandler & route_handler()
 {
   static const auto handler = make_route_handler();
@@ -272,7 +285,7 @@ TYPED_TEST(UpdateObjectsTest, EmptyInputProducesEmptyOutputs)
   typename TestFixture::Selector selector;
   const auto objects = make_objects<TypeParam>({});
 
-  selector.update_objects(make_time(0), objects, Trajectory{}, route_handler());
+  selector.update_objects(make_time(0), objects, Trajectory{}, route_handler(), vehicle_info());
 
   EXPECT_TRUE(selector.get_avoidance_targets(objects).objects.empty());
   EXPECT_TRUE(selector.get_driving_along_vehicles(objects).objects.empty());
@@ -283,7 +296,8 @@ TYPED_TEST(UpdateObjectsTest, StationaryDeviatedObjectIsImmediatelyAvoidanceTarg
   typename TestFixture::Selector selector;
   const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 2.0)});
 
-  selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(0), objects, this->trajectory_, route_handler(), vehicle_info());
   const auto avoidance_targets = selector.get_avoidance_targets(objects);
 
   EXPECT_EQ(object_ids(avoidance_targets), std::vector<uint8_t>({1}));
@@ -295,7 +309,8 @@ TYPED_TEST(UpdateObjectsTest, StationaryAlignedObjectIsNotAvoidanceTarget)
   typename TestFixture::Selector selector;
   const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 0.0)});
 
-  selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(0), objects, this->trajectory_, route_handler(), vehicle_info());
 
   EXPECT_TRUE(selector.get_avoidance_targets(objects).objects.empty());
   EXPECT_TRUE(selector.get_driving_along_vehicles(objects).objects.empty());
@@ -306,7 +321,8 @@ TYPED_TEST(UpdateObjectsTest, MovingConnectedObjectIsNotDrivingAlongVehicle)
   typename TestFixture::Selector selector;
   const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 0.0, 2.0)});
 
-  selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(0), objects, this->trajectory_, route_handler(), vehicle_info());
 
   EXPECT_TRUE(selector.get_driving_along_vehicles(objects).objects.empty());
 }
@@ -316,7 +332,8 @@ TYPED_TEST(UpdateObjectsTest, MovingDisconnectedObjectIsDrivingAlongVehicle)
   typename TestFixture::Selector selector;
   const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 2.6, 2.0)});
 
-  selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(0), objects, this->trajectory_, route_handler(), vehicle_info());
 
   EXPECT_EQ(object_ids(selector.get_driving_along_vehicles(objects)), std::vector<uint8_t>({1}));
 }
@@ -329,7 +346,8 @@ TYPED_TEST(UpdateObjectsTest, ClassificationProbabilityThresholdIsStrict)
      make_object<TypeParam>(2, 15.0, 2.0, 0.0, ObjectClassification::CAR, 0.1001F),
      make_object<TypeParam>(3, 15.0, 2.0, 0.0, ObjectClassification::PEDESTRIAN, 1.0F)});
 
-  selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(0), objects, this->trajectory_, route_handler(), vehicle_info());
   const auto avoidance_targets = selector.get_avoidance_targets(objects);
 
   EXPECT_EQ(object_ids(avoidance_targets), std::vector<uint8_t>({2}));
@@ -342,7 +360,8 @@ TYPED_TEST(UpdateObjectsTest, MixedObjectsPreserveHeaderAndSurvivingOrder)
     {make_object<TypeParam>(4, 12.0, 2.0), make_object<TypeParam>(2, 15.0, 0.0),
      make_object<TypeParam>(7, 18.0, 2.0), make_object<TypeParam>(9, 15.0, 2.6, 2.0)});
 
-  selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(0), objects, this->trajectory_, route_handler(), vehicle_info());
   const auto avoidance_targets = selector.get_avoidance_targets(objects);
   const auto driving_along = selector.get_driving_along_vehicles(objects);
 
@@ -358,7 +377,8 @@ TYPED_TEST(UpdateObjectsTest, EmptyAndSinglePointTrajectoriesUseCurrentFallbackB
   const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 0.0)});
 
   typename TestFixture::Selector empty_trajectory_selector;
-  empty_trajectory_selector.update_objects(make_time(0), objects, Trajectory{}, route_handler());
+  empty_trajectory_selector.update_objects(
+    make_time(0), objects, Trajectory{}, route_handler(), vehicle_info());
   EXPECT_EQ(
     object_ids(empty_trajectory_selector.get_avoidance_targets(objects)),
     std::vector<uint8_t>({1}));
@@ -366,7 +386,7 @@ TYPED_TEST(UpdateObjectsTest, EmptyAndSinglePointTrajectoriesUseCurrentFallbackB
   const auto single_point_trajectory = make_single_point_trajectory(15.0);
   typename TestFixture::Selector single_point_selector;
   single_point_selector.update_objects(
-    make_time(0), objects, single_point_trajectory, route_handler());
+    make_time(0), objects, single_point_trajectory, route_handler(), vehicle_info());
   EXPECT_EQ(
     object_ids(single_point_selector.get_avoidance_targets(objects)), std::vector<uint8_t>({1}));
 }
@@ -377,7 +397,7 @@ TYPED_TEST(UpdateObjectsTest, SinglePointTrajectorySupportsIdenticalPolygonEndpo
   const auto trajectory = make_single_point_trajectory(15.0);
   const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 2.6, 2.0)});
 
-  selector.update_objects(make_time(0), objects, trajectory, route_handler());
+  selector.update_objects(make_time(0), objects, trajectory, route_handler(), vehicle_info());
 
   EXPECT_EQ(object_ids(selector.get_driving_along_vehicles(objects)), std::vector<uint8_t>({1}));
 }
@@ -388,13 +408,16 @@ TYPED_TEST(UpdateObjectsTest, StaleThresholdComparisonIsStrict)
   const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 2.0)});
   const typename TestFixture::Objects empty_objects;
 
-  selector.update_objects(make_time(0), objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(0), objects, this->trajectory_, route_handler(), vehicle_info());
   ASSERT_EQ(selector.get_avoidance_targets(objects).objects.size(), 1U);
 
-  selector.update_objects(make_time(1), empty_objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(1), empty_objects, this->trajectory_, route_handler(), vehicle_info());
   EXPECT_EQ(selector.get_avoidance_targets(objects).objects.size(), 1U);
 
-  selector.update_objects(make_time(1, 1), empty_objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(1, 1), empty_objects, this->trajectory_, route_handler(), vehicle_info());
   EXPECT_TRUE(selector.get_avoidance_targets(objects).objects.empty());
 }
 
@@ -404,18 +427,19 @@ TYPED_TEST(UpdateObjectsTest, AvoidanceHysteresisCountAccumulatesDuringTimeLocko
   const auto deviated_objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 2.0)});
   const auto aligned_objects = make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 0.0)});
 
-  selector.update_objects(make_time(0), deviated_objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(0), deviated_objects, this->trajectory_, route_handler(), vehicle_info());
   ASSERT_EQ(selector.get_avoidance_targets(deviated_objects).objects.size(), 1U);
 
   selector.update_objects(
-    make_time(0, 100000000), aligned_objects, this->trajectory_, route_handler());
+    make_time(0, 100000000), aligned_objects, this->trajectory_, route_handler(), vehicle_info());
   // Repeated getter calls intentionally advance the state-change counter without advancing time.
   for (std::size_t i = 0; i < FilterManagerParams::count_threshold; ++i) {
     EXPECT_EQ(selector.get_avoidance_targets(aligned_objects).objects.size(), 1U);
   }
 
   selector.update_objects(
-    make_time(0, 500000000), aligned_objects, this->trajectory_, route_handler());
+    make_time(0, 500000000), aligned_objects, this->trajectory_, route_handler(), vehicle_info());
   EXPECT_TRUE(selector.get_avoidance_targets(aligned_objects).objects.empty());
 }
 
@@ -427,18 +451,47 @@ TYPED_TEST(UpdateObjectsTest, DrivingAlongHysteresisCountAccumulatesDuringTimeLo
   const auto connected_objects =
     make_objects<TypeParam>({make_object<TypeParam>(1, 15.0, 0.0, 2.0)});
 
-  selector.update_objects(make_time(0), disconnected_objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(0), disconnected_objects, this->trajectory_, route_handler(), vehicle_info());
   ASSERT_EQ(selector.get_driving_along_vehicles(disconnected_objects).objects.size(), 1U);
 
   selector.update_objects(
-    make_time(0, 100000000), connected_objects, this->trajectory_, route_handler());
+    make_time(0, 100000000), connected_objects, this->trajectory_, route_handler(), vehicle_info());
   // Repeated getter calls intentionally advance the state-change counter without advancing time.
   for (std::size_t i = 0; i < FilterManagerParams::count_threshold; ++i) {
     EXPECT_EQ(selector.get_driving_along_vehicles(connected_objects).objects.size(), 1U);
   }
 
-  selector.update_objects(make_time(5), connected_objects, this->trajectory_, route_handler());
+  selector.update_objects(
+    make_time(5), connected_objects, this->trajectory_, route_handler(), vehicle_info());
   EXPECT_TRUE(selector.get_driving_along_vehicles(connected_objects).objects.empty());
+}
+
+TYPED_TEST(UpdateObjectsTest, DrivingAlongStateLatchesInsideProximityPolygon)
+{
+  typename TestFixture::Selector selector;
+  const auto disconnected_objects =
+    make_objects<TypeParam>({make_object<TypeParam>(1, 2.0, 2.6, 2.0)});
+  // The ego sits at the trajectory front (x = 0.5), so its proximity polygon spans x in
+  // [-1.5, 4.5]. This object's footprint spans x in [0.0, 4.0] and therefore overlaps it, unlike
+  // the x = 15.0 object of the lockout test above.
+  const auto near_ego_objects = make_objects<TypeParam>({make_object<TypeParam>(1, 2.0, 0.0, 2.0)});
+
+  selector.update_objects(
+    make_time(0), disconnected_objects, this->trajectory_, route_handler(), vehicle_info());
+  ASSERT_EQ(selector.get_driving_along_vehicles(disconnected_objects).objects.size(), 1U);
+
+  selector.update_objects(
+    make_time(0, 100000000), near_ego_objects, this->trajectory_, route_handler(), vehicle_info());
+  for (std::size_t i = 0; i < FilterManagerParams::count_threshold; ++i) {
+    EXPECT_EQ(selector.get_driving_along_vehicles(near_ego_objects).objects.size(), 1U);
+  }
+
+  // Past the hysteresis window and the state-change threshold, the object would be dropped if it
+  // were not held by the proximity polygon.
+  selector.update_objects(
+    make_time(5), near_ego_objects, this->trajectory_, route_handler(), vehicle_info());
+  EXPECT_EQ(selector.get_driving_along_vehicles(near_ego_objects).objects.size(), 1U);
 }
 
 TYPED_TEST(UpdateObjectsTest, FirstObservationBypassesAllTransitionMatrices)
@@ -450,8 +503,8 @@ TYPED_TEST(UpdateObjectsTest, FirstObservationBypassesAllTransitionMatrices)
   StationaryFilter<TypeParam> stationary_filter(object, current_time);
   DeviationFilter<TypeParam> deviation_filter(object, current_time);
 
-  const auto context =
-    make_frame_evaluation_context<TypeParam>(current_time, this->trajectory_, route_handler());
+  const auto context = make_frame_evaluation_context<TypeParam>(
+    current_time, this->trajectory_, route_handler(), vehicle_info());
   target_filter.observe_and_update(context, object);
   stationary_filter.observe_and_update(context, object);
   deviation_filter.observe_and_update(context, object);

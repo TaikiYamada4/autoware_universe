@@ -256,6 +256,8 @@ private:
   bool is_driving_along_candidate_now_{false};
   /// Whether the object footprint overlapped the ego proximity polygon in the latest frame.
   bool is_in_ego_proximity_now_{false};
+  /// Whether the object footprint was entirely behind the ego in the latest frame.
+  bool is_behind_ego_now_{false};
 
   bool is_avoidance_tracking_initialized_{false};
   bool is_moving_vehicle_tracking_initialized_{false};

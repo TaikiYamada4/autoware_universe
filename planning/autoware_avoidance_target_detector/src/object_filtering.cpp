@@ -526,16 +526,56 @@ FootprintSRange get_footprint_s_range(
   return range;
 }
 
+/** Minimum and maximum signed longitudinal deviation of a footprint from a reference pose. */
+struct FootprintLongitudinalRange
+{
+  double min;
+  double max;
+};
+
 /**
- * @brief Check whether the object footprint lies beyond the trajectory end in s.
+ * @brief Compute the longitudinal deviation range of an object footprint from a reference pose.
+ * @details The whole footprint lies ahead of the pose when the minimum is positive, and behind it
+ *          when the maximum is negative.
+ * @return Zeroed range for an empty footprint, which reads as neither ahead nor behind.
+ */
+FootprintLongitudinalRange get_footprint_longitudinal_range(
+  const geometry_msgs::msg::Pose & pose,
+  const std::vector<geometry_msgs::msg::Point> & footprint_points)
+{
+  if (footprint_points.empty()) {
+    return {0.0, 0.0};
+  }
+
+  FootprintLongitudinalRange range{
+    std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest()};
+  for (const auto & footprint_point : footprint_points) {
+    const double deviation =
+      autoware_utils_geometry::calc_longitudinal_deviation(pose, footprint_point);
+    range.min = std::min(range.min, deviation);
+    range.max = std::max(range.max, deviation);
+  }
+  return range;
+}
+
+/**
+ * @brief Check whether the object footprint lies beyond the trajectory end.
+ * @details Compares longitudinal deviations from the end pose rather than the footprint arc-length
+ *          range: get_footprint_s_range() clamps every s into [0, length], so an object past the
+ *          end saturates at the end instead of reporting an s beyond it.
  * @param trajectory Interpolated reference trajectory.
- * @param range Cached footprint s range.
- * @return True if the minimum footprint s exceeds trajectory.length().
+ * @param trajectory_bases Cached trajectory arc-length bases.
+ * @param footprint_points Object footprint points.
+ * @return True if every footprint point lies ahead of the trajectory end pose.
  */
 bool is_beyond_trajectory_end(
-  const aw_trajectory::Trajectory<TrajectoryPoint> & trajectory, const FootprintSRange & range)
+  const aw_trajectory::Trajectory<TrajectoryPoint> & trajectory,
+  const std::vector<double> & trajectory_bases,
+  const std::vector<geometry_msgs::msg::Point> & footprint_points)
 {
-  return range.min > trajectory.length() + k_s_position_epsilon_m;
+  const auto end_pose =
+    trajectory.compute(max_interpolator_safe_s(trajectory, trajectory_bases)).pose;
+  return get_footprint_longitudinal_range(end_pose, footprint_points).min > k_s_position_epsilon_m;
 }
 
 /**
@@ -771,10 +811,34 @@ bool is_object_beyond_trajectory_end(
   }
 
   const auto footprint = autoware_utils_geometry::to_polygon2d(object);
-  const auto range = get_footprint_s_range(
-    *context.built_trajectory, context.trajectory_bases, context.trajectory_base_points, object,
-    footprint);
-  return is_beyond_trajectory_end(*context.built_trajectory, range);
+  return is_beyond_trajectory_end(
+    *context.built_trajectory, context.trajectory_bases,
+    get_object_footprint_points(object, footprint));
+}
+
+/**
+ * @brief Check whether the whole object footprint lies behind the trajectory start, i.e. behind
+ * ego.
+ * @details Counterpart of is_object_beyond_trajectory_end() for the ego-side end of the trajectory.
+ *          It compares longitudinal deviations from the start pose instead of the footprint
+ *          arc-length range, because get_footprint_s_range() clamps every s into [0, length] and so
+ *          cannot express a position behind the start.
+ * @return True when every footprint point is behind the trajectory start pose.
+ */
+template <typename ObjectT>
+bool is_object_behind_trajectory_start(
+  const FrameEvaluationContext<ObjectT> & context, const ObjectT & object)
+{
+  if (!context.built_trajectory) {
+    return false;
+  }
+
+  const auto start_pose = context.built_trajectory->compute(0.0).pose;
+  const auto footprint = autoware_utils_geometry::to_polygon2d(object);
+  const auto footprint_points = get_object_footprint_points(object, footprint);
+
+  return get_footprint_longitudinal_range(start_pose, footprint_points).max <
+         -k_s_position_epsilon_m;
 }
 
 template <typename ObjectT>
@@ -791,7 +855,9 @@ bool should_filter_out_on_trajectory_object(
   const auto range = get_footprint_s_range(
     built_trajectory, context.trajectory_bases, context.trajectory_base_points, object, footprint);
 
-  if (is_beyond_trajectory_end(built_trajectory, range)) {
+  if (is_beyond_trajectory_end(
+        built_trajectory, context.trajectory_bases,
+        get_object_footprint_points(object, footprint))) {
     return matches_small_d_pattern(
       built_trajectory, context.trajectory_bases, rear_left, rear_right,
       get_last_m_s_samples(context.trajectory_bases));
@@ -1028,6 +1094,10 @@ void AvoidanceTargetDetectorBase<ObjectT>::observe_and_update_all(
   is_in_ego_proximity_now_ =
     context.proximity_polygon && overlaps_polygon(object, *context.proximity_polygon);
 
+  // Also evaluated before the early returns, because avoidance targets are stationary objects and
+  // the return below would otherwise leave this stale for exactly the objects that need it.
+  is_behind_ego_now_ = is_object_behind_trajectory_start(context, object);
+
   is_driving_along_candidate_now_ = false;
   if (!is_object_of_interest() || is_stationary()) {
     return;
@@ -1064,7 +1134,10 @@ template <typename ObjectT>
 void AvoidanceTargetDetectorBase<ObjectT>::track_avoidance_targets()
 {
   const auto & current_time = stale_check_time_;
-  const bool is_target_now = is_object_of_interest() && is_stationary() && is_deviated();
+  // Objects behind the ego are never avoidance targets. This does not affect driving-along
+  // vehicles, which are tracked separately in track_driving_along_vehicles().
+  const bool is_target_now =
+    is_object_of_interest() && is_stationary() && is_deviated() && !is_behind_ego_now_;
 
   if (!is_avoidance_tracking_initialized_) {
     is_stationary_avoidance_target_stamped_.first = current_time;

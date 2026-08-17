@@ -304,6 +304,20 @@ TYPED_TEST(UpdateObjectsTest, StationaryDeviatedObjectIsImmediatelyAvoidanceTarg
   EXPECT_TRUE(selector.get_driving_along_vehicles(objects).objects.empty());
 }
 
+TYPED_TEST(UpdateObjectsTest, StationaryDeviatedObjectBehindEgoIsNotAvoidanceTarget)
+{
+  typename TestFixture::Selector selector;
+  // Same object as the test above, moved behind the ego. The trajectory starts at x = 0.5, so this
+  // footprint spans x in [-3.6, 0.4] and lies entirely behind the ego while still overlapping the
+  // near-segment polygon that gates object evaluation.
+  const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, -1.6, 2.0)});
+
+  selector.update_objects(
+    make_time(0), objects, this->trajectory_, route_handler(), vehicle_info());
+
+  EXPECT_TRUE(selector.get_avoidance_targets(objects).objects.empty());
+}
+
 TYPED_TEST(UpdateObjectsTest, StationaryAlignedObjectIsNotAvoidanceTarget)
 {
   typename TestFixture::Selector selector;
@@ -512,6 +526,29 @@ TYPED_TEST(UpdateObjectsTest, FirstObservationBypassesAllTransitionMatrices)
   EXPECT_DOUBLE_EQ(target_filter.get_posterior(), 0.95);
   EXPECT_DOUBLE_EQ(stationary_filter.get_posterior(), 0.99);
   EXPECT_DOUBLE_EQ(deviation_filter.get_posterior(), 0.05);
+}
+
+TYPED_TEST(UpdateObjectsTest, DeviationFilterAppliesBeyondTrajectoryEndTransitionMatrix)
+{
+  // The trajectory ends at x = 29.5. Both objects carry the same lateral offset, so both are
+  // deviated and observe the same likelihood; they differ only in whether their footprint lies past
+  // the trajectory end, which selects the less persistent transition matrix on the second
+  // observation.
+  const auto within_object = make_object<TypeParam>(1, 20.0, 3.0);
+  const auto beyond_object = make_object<TypeParam>(2, 35.0, 3.0);
+  const auto current_time = make_time(0);
+
+  DeviationFilter<TypeParam> within_filter(within_object, current_time);
+  DeviationFilter<TypeParam> beyond_filter(beyond_object, current_time);
+
+  const auto context = make_frame_evaluation_context<TypeParam>(
+    current_time, this->trajectory_, route_handler(), vehicle_info());
+  for (std::size_t i = 0; i < 2; ++i) {
+    within_filter.observe_and_update(context, within_object);
+    beyond_filter.observe_and_update(context, beyond_object);
+  }
+
+  EXPECT_LT(beyond_filter.get_posterior(), within_filter.get_posterior());
 }
 
 TYPED_TEST(UpdateObjectsTest, RangeFilterUsesCircularObjectFootprints)
